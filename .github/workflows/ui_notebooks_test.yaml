@@ -1,0 +1,112 @@
+name: UI notebooks tests
+
+on: [pull_request]
+
+concurrency:
+  group: ${{ github.head_ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+env:
+  CODEFLARE_OPERATOR_IMG: "quay.io/project-codeflare/codeflare-operator:dev"
+
+jobs:
+  verify-0_basic_ray:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout common repo code
+        uses: actions/checkout@v4
+        with:
+          repository: "project-codeflare/codeflare-common"
+          ref: "main"
+          path: "common"
+
+      - name: Checkout CodeFlare operator repository
+        uses: actions/checkout@v4
+        with:
+          repository: project-codeflare/codeflare-operator
+          path: codeflare-operator
+
+      - name: Set Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "./codeflare-operator/go.mod"
+          cache-dependency-path: "./codeflare-operator/go.sum"
+
+      - name: Set up gotestfmt
+        uses: gotesttools/gotestfmt-action@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up specific Python version
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+          cache: "pip" # caching pip dependencies
+
+      - name: Setup and start KinD cluster
+        uses: ./common/github-actions/kind
+
+      - name: Deploy CodeFlare stack
+        id: deploy
+        run: |
+          cd codeflare-operator
+          echo Setting up CodeFlare stack
+          make setup-e2e
+          echo Deploying CodeFlare operator
+          make deploy -e IMG="${CODEFLARE_OPERATOR_IMG}" -e ENV="e2e"
+          kubectl wait --timeout=120s --for=condition=Available=true deployment -n openshift-operators codeflare-operator-manager
+          cd ..
+
+      - name: Setup Guided notebooks execution
+        run: |
+          echo "Installing papermill and dependencies..."
+          pip install poetry ipython ipykernel jupyterlab
+          poetry config virtualenvs.create false
+          echo "Installing SDK..."
+          poetry install --with test,docs
+
+      - name: Install Yarn dependencies
+        run: |
+          poetry run yarn install
+          poetry run yarn playwright install chromium
+        working-directory: ui-tests
+
+      - name: Run UI notebook tests
+        run: |
+          set -euo pipefail
+          poetry run yarn test
+        working-directory: ui-tests
+
+      - name: Print CodeFlare operator logs
+        if: always() && steps.deploy.outcome == 'success'
+        run: |
+          echo "Printing CodeFlare operator logs"
+          kubectl logs -n openshift-operators --tail -1 -l app.kubernetes.io/name=codeflare-operator | tee ${CODEFLARE_TEST_OUTPUT_DIR}/codeflare-operator.log
+
+      - name: Print KubeRay operator logs
+        if: always() && steps.deploy.outcome == 'success'
+        run: |
+          echo "Printing KubeRay operator logs"
+          kubectl logs -n ray-system --tail -1 -l app.kubernetes.io/name=kuberay | tee ${CODEFLARE_TEST_OUTPUT_DIR}/kuberay.log
+
+      - name: Upload Playwright Test assets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipywidgets-test-assets
+          path: |
+            ui-tests/test-results
+
+      - name: Upload Playwright Test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipywidgets-test-report
+          path: |
+            ui-tests/playwright-report
