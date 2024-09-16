@@ -4,21 +4,21 @@ on:
   pull_request:
     branches:
       - main
-      - 'release-*'
+      - "release-*"
     paths-ignore:
-      - 'docs/**'
-      - '**.adoc'
-      - '**.md'
-      - 'LICENSE'
+      - "docs/**"
+      - "**.adoc"
+      - "**.md"
+      - "LICENSE"
   push:
     branches:
       - main
-      - 'release-*'
+      - "release-*"
     paths-ignore:
-      - 'docs/**'
-      - '**.adoc'
-      - '**.md'
-      - 'LICENSE'
+      - "docs/**"
+      - "**.adoc"
+      - "**.md"
+      - "LICENSE"
 
 concurrency:
   group: ${{ github.head_ref }}-${{ github.workflow }}
@@ -29,7 +29,6 @@ env:
 
 jobs:
   kubernetes:
-
     runs-on: ubuntu-20.04-4core-gpu
 
     steps:
@@ -41,9 +40,9 @@ jobs:
       - name: Checkout common repo code
         uses: actions/checkout@v4
         with:
-          repository: 'project-codeflare/codeflare-common'
-          ref: 'main'
-          path: 'common'
+          repository: "project-codeflare/codeflare-common"
+          ref: "main"
+          path: "common"
 
       - name: Checkout CodeFlare operator repository
         uses: actions/checkout@v4
@@ -54,7 +53,7 @@ jobs:
       - name: Set Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: './codeflare-operator/go.mod'
+          go-version-file: "./codeflare-operator/go.mod"
           cache-dependency-path: "./codeflare-operator/go.sum"
 
       - name: Set up gotestfmt
@@ -65,8 +64,8 @@ jobs:
       - name: Set up specific Python version
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-          cache: 'pip' # caching pip dependencies
+          python-version: "3.9"
+          cache: "pip" # caching pip dependencies
 
       - name: Setup NVidia GPU environment for KinD
         uses: ./common/github-actions/nvidia-gpu-setup
@@ -114,6 +113,19 @@ jobs:
           kubectl config use-context sdk-user
 
       - name: Run e2e tests
+        run: |
+          export CODEFLARE_TEST_OUTPUT_DIR=${{ env.TEMP_DIR }}
+          echo "CODEFLARE_TEST_OUTPUT_DIR=${CODEFLARE_TEST_OUTPUT_DIR}" >> $GITHUB_ENV
+
+          set -euo pipefail
+          pip install poetry
+          poetry install --with test,docs
+          echo "Running e2e tests..."
+          poetry run pytest -v -s ./tests/e2e -m 'kind and nvidia_gpu' > ${CODEFLARE_TEST_OUTPUT_DIR}/pytest_output.log 2>&1
+        env:
+          GRPC_DNS_RESOLVER: "native"
+
+      - name: Run ui tests
         run: |
           export CODEFLARE_TEST_OUTPUT_DIR=${{ env.TEMP_DIR }}
           echo "CODEFLARE_TEST_OUTPUT_DIR=${CODEFLARE_TEST_OUTPUT_DIR}" >> $GITHUB_ENV
