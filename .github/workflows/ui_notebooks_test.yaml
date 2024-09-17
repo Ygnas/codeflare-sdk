@@ -11,7 +11,7 @@ env:
 
 jobs:
   verify-0_basic_ray:
-    runs-on: ubuntu-20.04-4core
+    runs-on: self-hosted
 
     steps:
       - name: Checkout code
