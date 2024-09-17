@@ -8,12 +8,10 @@ concurrency:
 
 env:
   CODEFLARE_OPERATOR_IMG: "quay.io/project-codeflare/codeflare-operator:dev"
-  KUBERAY_VERSION: "v1.2.0" # Define the version of KubeRay
-  KUEUE_VERSION: "v0.7.0" # Define the version of Kueue
 
 jobs:
   verify-0_basic_ray:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04-4core
 
     steps:
       - name: Checkout code
@@ -54,93 +52,12 @@ jobs:
       - name: Setup and start KinD cluster
         uses: ./common/github-actions/kind
 
-      - name: Deploy KubeRay and Kueue
-        run: |
-          set -euo pipefail
-
-          echo "Deploying KubeRay ${KUBERAY_VERSION}"
-          kubectl apply --server-side -k "github.com/ray-project/kuberay/ray-operator/config/default?ref=${KUBERAY_VERSION}&timeout=180s"
-
-          cat <<EOF | kubectl apply -f -
-          apiVersion: rbac.authorization.k8s.io/v1
-          kind: ClusterRole
-          metadata:
-            name: e2e-controller-rayclusters
-          rules:
-            - apiGroups:
-                - ray.io
-              resources:
-                - rayclusters
-                - rayclusters/finalizers
-                - rayclusters/status
-              verbs:
-                - get
-                - list
-                - watch
-                - create
-                - update
-                - patch
-                - delete
-          EOF
-
-          cat <<EOF | kubectl apply -f -
-          kind: ClusterRoleBinding
-          apiVersion: rbac.authorization.k8s.io/v1
-          metadata:
-            name: e2e-controller-rayclusters
-          subjects:
-            - kind: ServiceAccount
-              name: codeflare-operator-controller-manager
-              namespace: openshift-operators
-          roleRef:
-            apiGroup: rbac.authorization.k8s.io
-            kind: ClusterRole
-            name: e2e-controller-rayclusters
-          EOF
-
-          echo "Deploying Kueue ${KUEUE_VERSION}"
-          kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/${KUEUE_VERSION}/manifests.yaml
-
-          echo "Waiting for pods in the kueue-system namespace to become ready"
-          while [[ $(kubectl get pods -n kueue-system -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}' | tr ' ' '\n' | sort -u) != "True" ]]; do
-            echo -n "." && sleep 1
-          done
-          echo ""
-
-          sleep 5
-          echo "Creating Kueue ResourceFlavor and ClusterQueue"
-          cat <<EOF | kubectl apply -f -
-          apiVersion: kueue.x-k8s.io/v1beta1
-          kind: ResourceFlavor
-          metadata:
-            name: "default-flavor"
-          EOF
-
-          cat <<EOF | kubectl apply -f -
-          apiVersion: kueue.x-k8s.io/v1beta1
-          kind: ClusterQueue
-          metadata:
-            name: "e2e-cluster-queue"
-          spec:
-            namespaceSelector: {} # match all.
-            resourceGroups:
-            - coveredResources: ["cpu","memory", "nvidia.com/gpu"]
-              flavors:
-              - name: "default-flavor"
-                resources:
-                - name: "cpu"
-                  nominalQuota: 4
-                - name: "memory"
-                  nominalQuota: "16G"
-                - name: "nvidia.com/gpu"
-                  nominalQuota: "0"
-          EOF
-
       - name: Deploy CodeFlare stack
         id: deploy
         run: |
           cd codeflare-operator
           echo Setting up CodeFlare stack
+          make setup-e2e
           echo Deploying CodeFlare operator
           make deploy -e IMG="${CODEFLARE_OPERATOR_IMG}" -e ENV="e2e"
           kubectl wait --timeout=120s --for=condition=Available=true deployment -n openshift-operators codeflare-operator-manager
@@ -149,7 +66,7 @@ jobs:
       - name: Setup Guided notebooks execution
         run: |
           echo "Installing papermill and dependencies..."
-          pip install poetry ipython ipykernel jupyterlab
+          pip install poetry ipython ipykernel
           poetry config virtualenvs.create false
           echo "Installing SDK..."
           poetry install --with test,docs
@@ -193,4 +110,3 @@ jobs:
           name: ipywidgets-test-report
           path: |
             ui-tests/playwright-report
-
