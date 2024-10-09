@@ -11,6 +11,7 @@ import math
 
 from support import *
 
+
 @pytest.mark.local
 class TestRayLocalInteractiveOauth:
     def setup_method(self):
@@ -55,21 +56,22 @@ class TestRayLocalInteractiveOauth:
                 name="secondcluster",
                 namespace=self.namespace,
                 num_workers=1,
-                head_cpu_requests="1000m",
-                head_cpu_limits="1000m",
+                head_cpu_requests="500m",
+                head_cpu_limits="500m",
                 head_memory_requests=2,
                 head_memory_limits=2,
-                worker_cpu_requests="1000m",
+                worker_cpu_requests="500m",
                 worker_cpu_limits=1,
-                worker_memory_requests=2,
+                worker_memory_requests=1,
                 worker_memory_limits=4,
                 worker_extended_resource_requests={gpu_resource_name: number_of_gpus},
                 write_to_file=True,
                 verify_tls=False,
             )
         )
-        cluster2.up()
+        # cluster2.up()
         cluster.wait_ready()
+        # cluster2.wait_ready()
         cluster.status()
         # generate_cert.generate_tls_cert(cluster_name, self.namespace)
         # generate_cert.export_env(cluster_name, self.namespace)
@@ -102,4 +104,4 @@ class TestRayLocalInteractiveOauth:
         # ray.shutdown()
 
         cluster.down()
-        cluster2.down()
+        # cluster2.down()
