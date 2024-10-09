@@ -72,7 +72,7 @@ class TestRayLocalInteractiveOauth:
         # cluster2.up()
         cluster.wait_ready()
         # cluster2.wait_ready()
-        cluster.status()
+        # cluster.status()
         generate_cert.generate_tls_cert(cluster_name, self.namespace)
         generate_cert.export_env(cluster_name, self.namespace)
 

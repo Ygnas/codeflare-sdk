@@ -74,9 +74,13 @@ def create_new_resource_flavor(self):
 
 def create_new_cluster_queue(self):
     self.cluster_queue = f"test-cluster-queue-{random_choice()}"
-    create_cluster_queue(self, self.cluster_queue, self.resource_flavor,self.resource_flavor2)
+    create_cluster_queue(
+        self, self.cluster_queue, self.resource_flavor, self.resource_flavor2
+    )
     self.cluster_queue2 = f"test-cluster-second-{random_choice()}"
-    create_cluster_queue2(self, self.cluster_queue2, self.resource_flavor,self.resource_flavor2)
+    create_cluster_queue2(
+        self, self.cluster_queue2, self.resource_flavor, self.resource_flavor2
+    )
 
 
 def create_new_local_queue(self):
@@ -120,7 +124,7 @@ def run_oc_command(args):
         return None
 
 
-def create_cluster_queue(self, cluster_queue, flavor,flavor2):
+def create_cluster_queue(self, cluster_queue, flavor, flavor2):
     cluster_queue_json = {
         "apiVersion": "kueue.x-k8s.io/v1beta1",
         "kind": "ClusterQueue",
@@ -147,7 +151,7 @@ def create_cluster_queue(self, cluster_queue, flavor,flavor2):
                                 {"name": "memory", "nominalQuota": "0Gi"},
                                 {"name": "nvidia.com/gpu", "nominalQuota": 0},
                             ],
-                        }
+                        },
                     ],
                 }
             ],
@@ -203,7 +207,7 @@ def create_cluster_queue2(self, cluster_queue2, flavor, flavor2):
                                 {"name": "memory", "nominalQuota": "4Gi"},
                                 {"name": "nvidia.com/gpu", "nominalQuota": 1},
                             ],
-                        }
+                        },
                     ],
                 }
             ],
@@ -238,17 +242,11 @@ def create_resource_flavor(self, flavor):
         "kind": "ResourceFlavor",
         "metadata": {"name": flavor},
         "spec": {
-            "nodeLabels": {
-                "instance-type": "compute-node"
-            },
+            "nodeLabels": {"instance-type": "compute-node"},
             "tolerations": [
-                {
-                    "key": "HasGPU",
-                    "operator": "Exists",
-                    "effect": "NoSchedule"
-                }
-            ]
-        }
+                {"key": "HasGPU", "operator": "Exists", "effect": "NoSchedule"}
+            ],
+        },
     }
 
     try:
@@ -278,11 +276,7 @@ def create_resource_flavor2(self, flavor):
         "apiVersion": "kueue.x-k8s.io/v1beta1",
         "kind": "ResourceFlavor",
         "metadata": {"name": flavor},
-        "spec": {
-            "nodeLabels": {
-                "instance-type": "compute-node2"
-            }
-        }
+        "spec": {"nodeLabels": {"instance-type": "compute-node2"}},
     }
 
     try:
