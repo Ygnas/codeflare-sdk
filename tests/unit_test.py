@@ -13,82 +13,72 @@
 # limitations under the License.
 
 
-from pathlib import Path
-import sys
 import filecmp
 import os
 import re
+import sys
 import uuid
-
-from codeflare_sdk.cluster import cluster
+from pathlib import Path
 
 parent = Path(__file__).resolve().parents[1]
 aw_dir = os.path.expanduser("~/.codeflare/resources/")
 sys.path.append(str(parent) + "/src")
 
-from kubernetes import client, config, dynamic
-from codeflare_sdk.cluster.awload import AWManager
-from codeflare_sdk.cluster.cluster import (
-    Cluster,
-    ClusterConfiguration,
-    _map_to_ray_cluster,
-    list_all_clusters,
-    list_all_queued,
-    _copy_to_ray,
-    get_cluster,
-    _app_wrapper_status,
-    _ray_cluster_status,
-)
+from unittest.mock import MagicMock, patch
+
+import openshift
+import pandas as pd
+import pytest
+import ray
+import yaml
+from kubernetes import client, config
+from pytest_mock import MockerFixture
+from ray.job_submission import JobSubmissionClient
+
+import codeflare_sdk.common.widgets.widgets as cf_widgets
 from codeflare_sdk.common.kubernetes_cluster import (
-    TokenAuthentication,
     Authentication,
     KubeConfigFileAuthentication,
+    TokenAuthentication,
     config_check,
 )
-from codeflare_sdk.utils.pretty_print import (
-    print_no_resources_found,
+from codeflare_sdk.common.utils.generate_cert import (
+    export_env,
+    generate_ca_cert,
+    generate_tls_cert,
+)
+from codeflare_sdk.ray.appwrapper.awload import AWManager
+from codeflare_sdk.ray.appwrapper.status import AppWrapper, AppWrapperStatus
+from codeflare_sdk.ray.client.ray_jobs import RayJobClient
+from codeflare_sdk.ray.cluster.cluster import (
+    Cluster,
+    ClusterConfiguration,
+    _app_wrapper_status,
+    _copy_to_ray,
+    _map_to_ray_cluster,
+    _ray_cluster_status,
+    get_cluster,
+    list_all_clusters,
+    list_all_queued,
+)
+from codeflare_sdk.ray.cluster.generate_yaml import gen_names, is_openshift_cluster
+from codeflare_sdk.ray.cluster.pretty_print import (
     print_app_wrappers_status,
     print_cluster_status,
     print_clusters,
+    print_no_resources_found,
 )
-from codeflare_sdk.cluster.model import (
-    AppWrapper,
-    RayCluster,
-    AppWrapperStatus,
-    RayClusterStatus,
+from codeflare_sdk.ray.cluster.status import (
     CodeFlareClusterStatus,
+    RayCluster,
+    RayClusterStatus,
 )
-from codeflare_sdk.utils.generate_cert import (
-    generate_ca_cert,
-    generate_tls_cert,
-    export_env,
-)
-
 from tests.unit_test_support import (
-    createClusterWithConfig,
     createClusterConfig,
+    createClusterWithConfig,
     createClusterWrongType,
     get_package_and_version,
 )
-
-import codeflare_sdk.common.kubernetes_cluster.kube_api_helpers
-from codeflare_sdk.utils.generate_yaml import (
-    gen_names,
-    is_openshift_cluster,
-)
-
-import codeflare_sdk.cluster.widgets as cf_widgets
-import pandas as pd
-
-import openshift
-from openshift.selector import Selector
-import ray
-import pytest
-import yaml
-from unittest.mock import MagicMock, patch
-from pytest_mock import MockerFixture
-from ray.job_submission import JobSubmissionClient
-from codeflare_sdk.job.ray_jobs import RayJobClient
 
 # For mocking openshift client results
 fake_res = openshift.Result("fake")
@@ -153,7 +143,7 @@ def test_token_auth_creation():
         assert token_auth.skip_tls == False
         assert token_auth.ca_cert_path == f"{parent}/tests/auth-test.crt"
 
-    except Exception as e:
+    except Exception:
         assert 0 == 1
 
 
@@ -201,7 +191,7 @@ def test_config_check_no_config_file(mocker):
     mocker.patch("codeflare_sdk.common.kubernetes_cluster.auth.config_path", None)
     mocker.patch("codeflare_sdk.common.kubernetes_cluster.auth.api_client", None)
 
-    with pytest.raises(PermissionError) as e:
+    with pytest.raises(PermissionError):
         config_check()
 
 
@@ -268,7 +258,10 @@ def test_config_creation():
     assert config.worker_cpu_requests == 3 and config.worker_cpu_limits == 4
     assert config.worker_memory_requests == "5G" and config.worker_memory_limits == "6G"
     assert config.worker_extended_resource_requests == {"nvidia.com/gpu": 7}
-    assert config.template == f"{parent}/src/codeflare_sdk/templates/base-template.yaml"
+    assert (
+        config.template
+        == f"{parent}/src/codeflare_sdk/ray/templates/base-template.yaml"
+    )
     assert config.machine_types == ["cpu.small", "gpu.large"]
     assert config.image_pull_secrets == ["unit-test-pull-secret"]
     assert config.appwrapper == True
@@ -276,7 +269,7 @@ def test_config_creation():
 
 def test_config_creation_wrong_type():
     with pytest.raises(TypeError):
-        config = createClusterWrongType()
+        createClusterWrongType()
 
 
 def test_cluster_creation(mocker):
@@ -438,7 +431,7 @@ def test_cluster_creation_no_mcad_local_queue(mocker):
 def test_default_cluster_creation(mocker):
     mocker.patch("kubernetes.client.ApisApi.get_api_versions")
     mocker.patch(
-        "codeflare_sdk.cluster.cluster.get_current_namespace",
+        "codeflare_sdk.ray.cluster.cluster.get_current_namespace",
         return_value="opendatahub",
     )
     mocker.patch(
@@ -593,7 +586,7 @@ def arg_check_del_effect(group, version, namespace, plural, name, *args):
 def test_cluster_up_down(mocker):
     mocker.patch("kubernetes.client.ApisApi.get_api_versions")
     mocker.patch("kubernetes.config.load_kube_config", return_value="ignore")
-    mocker.patch("codeflare_sdk.cluster.cluster.Cluster._throw_for_no_raycluster")
+    mocker.patch("codeflare_sdk.ray.cluster.cluster.Cluster._throw_for_no_raycluster")
     mocker.patch(
         "kubernetes.client.CustomObjectsApi.get_cluster_custom_object",
         return_value={"spec": {"domain": ""}},
@@ -620,7 +613,7 @@ def test_cluster_up_down(mocker):
 
 
 def test_cluster_up_down_no_mcad(mocker):
-    mocker.patch("codeflare_sdk.cluster.cluster.Cluster._throw_for_no_raycluster")
+    mocker.patch("codeflare_sdk.ray.cluster.cluster.Cluster._throw_for_no_raycluster")
     mocker.patch("kubernetes.config.load_kube_config", return_value="ignore")
     mocker.patch("kubernetes.client.ApisApi.get_api_versions")
     mocker.patch(
@@ -716,7 +709,7 @@ def test_cluster_uris(mocker):
     mocker.patch("kubernetes.client.ApisApi.get_api_versions")
     mocker.patch("kubernetes.config.load_kube_config", return_value="ignore")
     mocker.patch(
-        "codeflare_sdk.cluster.cluster._get_ingress_domain",
+        "codeflare_sdk.ray.cluster.cluster._get_ingress_domain",
         return_value="apps.cluster.awsroute.org",
     )
     mocker.patch(
@@ -760,11 +753,11 @@ def test_local_client_url(mocker):
         return_value={"spec": {"domain": ""}},
     )
     mocker.patch(
-        "codeflare_sdk.cluster.cluster._get_ingress_domain",
+        "codeflare_sdk.ray.cluster.cluster._get_ingress_domain",
         return_value="rayclient-unit-test-cluster-localinter-ns.apps.cluster.awsroute.org",
     )
     mocker.patch(
-        "codeflare_sdk.cluster.cluster.Cluster.create_app_wrapper",
+        "codeflare_sdk.ray.cluster.cluster.Cluster.create_app_wrapper",
         return_value="unit-test-cluster-localinter.yaml",
     )
 
@@ -884,7 +877,7 @@ def test_ray_job_wrapping(mocker):
 def test_print_no_resources(capsys):
     try:
         print_no_resources_found()
-    except:
+    except Exception:
         assert 1 == 0
     captured = capsys.readouterr()
     assert captured.out == (
@@ -897,7 +890,7 @@ def test_print_no_resources(capsys):
 def test_print_no_cluster(capsys):
     try:
         print_cluster_status(None)
-    except:
+    except Exception:
         assert 1 == 0
     captured = capsys.readouterr()
     assert captured.out == (
@@ -918,7 +911,7 @@ def test_print_appwrappers(capsys):
     )
     try:
         print_app_wrappers_status([aw1, aw2])
-    except:
+    except Exception:
         assert 1 == 0
     captured = capsys.readouterr()
     assert captured.out == (
@@ -955,15 +948,15 @@ def test_ray_details(mocker, capsys):
         head_mem_limits=8,
     )
     mocker.patch(
-        "codeflare_sdk.cluster.cluster.Cluster.status",
+        "codeflare_sdk.ray.cluster.cluster.Cluster.status",
         return_value=(False, CodeFlareClusterStatus.UNKNOWN),
     )
     mocker.patch(
-        "codeflare_sdk.cluster.cluster.Cluster.cluster_dashboard_uri",
+        "codeflare_sdk.ray.cluster.cluster.Cluster.cluster_dashboard_uri",
         return_value="",
     )
     mocker.patch(
-        "codeflare_sdk.utils.generate_yaml.local_queue_exists",
+        "codeflare_sdk.common.kueue.kueue.local_queue_exists",
         return_value="true",
     )
     cf = Cluster(
@@ -991,7 +984,7 @@ def test_ray_details(mocker, capsys):
         print_clusters([ray1, ray2])
         print_cluster_status(ray1)
         print_cluster_status(ray2)
-    except:
+    except Exception:
         assert 0 == 1
     captured = capsys.readouterr()
     assert captured.out == (
@@ -2002,7 +1995,7 @@ def test_get_cluster_openshift(mocker):
     ]
     mocker.patch("kubernetes.client.ApisApi", return_value=mock_api)
     mocker.patch(
-        "codeflare_sdk.utils.generate_yaml.local_queue_exists",
+        "codeflare_sdk.common.kueue.kueue.local_queue_exists",
         return_value="true",
     )
 
@@ -2037,7 +2030,7 @@ def test_get_cluster_openshift(mocker):
         ],
     )
     mocker.patch(
-        "codeflare_sdk.utils.generate_yaml.local_queue_exists",
+        "codeflare_sdk.common.kueue.kueue.local_queue_exists",
         return_value="true",
     )
 
@@ -2080,7 +2073,7 @@ def test_get_cluster(mocker):
         return_value=ingress_retrieval(cluster_name="quicktest", client_ing=True),
     )
     mocker.patch(
-        "codeflare_sdk.utils.generate_yaml.local_queue_exists",
+        "codeflare_sdk.common.kueue.kueue.local_queue_exists",
         return_value="true",
     )
     cluster = get_cluster("quicktest")
@@ -2118,7 +2111,7 @@ def test_get_cluster_no_mcad(mocker):
         return_value=ingress_retrieval(cluster_name="quicktest", client_ing=True),
     )
     mocker.patch(
-        "codeflare_sdk.utils.generate_yaml.local_queue_exists",
+        "codeflare_sdk.common.kueue.kueue.local_queue_exists",
         return_value="true",
     )
     cluster = get_cluster("quicktest")
@@ -2167,7 +2160,7 @@ def test_map_to_ray_cluster(mocker):
     mocker.patch("kubernetes.config.load_kube_config")
 
     mocker.patch(
-        "codeflare_sdk.cluster.cluster.is_openshift_cluster", return_value=True
+        "codeflare_sdk.ray.cluster.cluster.is_openshift_cluster", return_value=True
     )
 
     mock_api_client = mocker.MagicMock(spec=client.ApiClient)
@@ -2354,7 +2347,7 @@ def test_cluster_status(mocker):
     mocker.patch("kubernetes.client.ApisApi.get_api_versions")
     mocker.patch("kubernetes.config.load_kube_config", return_value="ignore")
     mocker.patch(
-        "codeflare_sdk.utils.generate_yaml.local_queue_exists",
+        "codeflare_sdk.common.kueue.kueue.local_queue_exists",
         return_value="true",
     )
     fake_aw = AppWrapper("test", AppWrapperStatus.FAILED)
@@ -2382,14 +2375,18 @@ def test_cluster_status(mocker):
             local_queue="local_default_queue",
         )
     )
-    mocker.patch("codeflare_sdk.cluster.cluster._app_wrapper_status", return_value=None)
-    mocker.patch("codeflare_sdk.cluster.cluster._ray_cluster_status", return_value=None)
+    mocker.patch(
+        "codeflare_sdk.ray.cluster.cluster._app_wrapper_status", return_value=None
+    )
+    mocker.patch(
+        "codeflare_sdk.ray.cluster.cluster._ray_cluster_status", return_value=None
+    )
     status, ready = cf.status()
     assert status == CodeFlareClusterStatus.UNKNOWN
     assert ready == False
 
     mocker.patch(
-        "codeflare_sdk.cluster.cluster._app_wrapper_status", return_value=fake_aw
+        "codeflare_sdk.ray.cluster.cluster._app_wrapper_status", return_value=fake_aw
     )
     status, ready = cf.status()
     assert status == CodeFlareClusterStatus.FAILED
@@ -2416,7 +2413,7 @@ def test_cluster_status(mocker):
     assert ready == False
 
     mocker.patch(
-        "codeflare_sdk.cluster.cluster._ray_cluster_status", return_value=fake_ray
+        "codeflare_sdk.ray.cluster.cluster._ray_cluster_status", return_value=fake_ray
     )
 
     status, ready = cf.status()
@@ -2446,10 +2443,14 @@ def test_wait_ready(mocker, capsys):
         return_value=ingress_retrieval(),
     )
     mocker.patch("kubernetes.config.load_kube_config", return_value="ignore")
-    mocker.patch("codeflare_sdk.cluster.cluster._app_wrapper_status", return_value=None)
-    mocker.patch("codeflare_sdk.cluster.cluster._ray_cluster_status", return_value=None)
     mocker.patch(
-        "codeflare_sdk.utils.generate_yaml.local_queue_exists",
+        "codeflare_sdk.ray.cluster.cluster._app_wrapper_status", return_value=None
+    )
+    mocker.patch(
+        "codeflare_sdk.ray.cluster.cluster._ray_cluster_status", return_value=None
+    )
+    mocker.patch(
+        "codeflare_sdk.common.kueue.kueue.local_queue_exists",
         return_value="true",
     )
     mocker.patch.object(
@@ -2488,7 +2489,7 @@ def test_wait_ready(mocker, capsys):
         in captured.out
     )
     mocker.patch(
-        "codeflare_sdk.cluster.cluster.Cluster.status",
+        "codeflare_sdk.ray.cluster.cluster.Cluster.status",
         return_value=(True, CodeFlareClusterStatus.READY),
     )
     cf.wait_ready()
@@ -2588,18 +2589,19 @@ def test_AWManager_submit_remove(mocker, capsys):
     assert testaw.submitted == False
 
 
-from cryptography.x509 import load_pem_x509_certificate
 import base64
+
 from cryptography.hazmat.primitives.serialization import (
-    load_pem_private_key,
     Encoding,
     PublicFormat,
+    load_pem_private_key,
 )
+from cryptography.x509 import load_pem_x509_certificate
 
 
 def test_generate_ca_cert():
     """
-    test the function codeflare_sdk.utils.generate_ca_cert generates the correct outputs
+    test the function codeflare_sdk.common.utils.generate_ca_cert generates the correct outputs
     """
     key, certificate = generate_ca_cert()
     cert = load_pem_x509_certificate(base64.b64decode(certificate))
@@ -2629,11 +2631,11 @@ def secret_ca_retreival(secret_name, namespace):
 
 def test_generate_tls_cert(mocker):
     """
-    test the function codeflare_sdk.utils.generate_ca_cert generates the correct outputs
+    test the function codeflare_sdk.common.utils.generate_ca_cert generates the correct outputs
     """
     mocker.patch("kubernetes.config.load_kube_config", return_value="ignore")
     mocker.patch(
-        "codeflare_sdk.utils.generate_cert.get_secret_name",
+        "codeflare_sdk.common.utils.generate_cert.get_secret_name",
         return_value="ca-secret-cluster",
     )
     mocker.patch(
@@ -2657,7 +2659,7 @@ def test_generate_tls_cert(mocker):
 
 def test_export_env():
     """
-    test the function codeflare_sdk.utils.export_ev generates the correct outputs
+    test the function codeflare_sdk.common.utils.generate_ca_cert.export_ev generates the correct outputs
     """
     tls_dir = "cluster"
     ns = "namespace"
@@ -2677,15 +2679,15 @@ def test_export_env():
 def test_cluster_throw_for_no_raycluster(mocker: MockerFixture):
     mocker.patch("kubernetes.client.ApisApi.get_api_versions")
     mocker.patch(
-        "codeflare_sdk.cluster.cluster.get_current_namespace",
+        "codeflare_sdk.ray.cluster.cluster.get_current_namespace",
         return_value="opendatahub",
     )
     mocker.patch(
-        "codeflare_sdk.utils.generate_yaml.get_default_kueue_name",
+        "codeflare_sdk.common.kueue.kueue.get_default_kueue_name",
         return_value="default",
     )
     mocker.patch(
-        "codeflare_sdk.utils.generate_yaml.local_queue_exists",
+        "codeflare_sdk.common.kueue.kueue.local_queue_exists",
         return_value="true",
     )
 
@@ -2946,164 +2948,298 @@ def test_cluster_up_down_buttons(mocker):
 
 @patch.dict("os.environ", {}, clear=True)  # Mock environment with no variables
 def test_is_notebook_false():
-    from codeflare_sdk.cluster.widgets import is_notebook
-
-    assert is_notebook() is False
+    assert cf_widgets.is_notebook() is False
 
 
 @patch.dict(
     "os.environ", {"JPY_SESSION_NAME": "example-test"}
 )  # Mock Jupyter environment variable
 def test_is_notebook_true():
-    from codeflare_sdk.cluster.widgets import is_notebook
-
-    assert is_notebook() is True
+    assert cf_widgets.is_notebook() is True
 
 
 def test_view_clusters(mocker, capsys):
-    from kubernetes.client.rest import ApiException
-
-    mocker.patch("codeflare_sdk.cluster.widgets.is_notebook", return_value=False)
+    # If is not a notebook environment, a warning should be raised
     with pytest.warns(
         UserWarning,
         match="view_clusters can only be used in a Jupyter Notebook environment.",
     ):
-        result = cf_widgets.view_clusters(namespace="default")
+        result = cf_widgets.view_clusters("default")
+
         # Assert the function returns None when not in a notebook environment
         assert result is None
 
-    mocker.patch("codeflare_sdk.cluster.widgets.is_notebook", return_value=True)
-
-    # Mock Kubernetes API responses
-    mocker.patch("kubernetes.client.ApisApi.get_api_versions")
-    mocker.patch(
-        "kubernetes.client.CustomObjectsApi.list_namespaced_custom_object",
-        return_value={"items": []},
-    )
-    mocker.patch("codeflare_sdk.cluster.cluster._check_aw_exists", return_value=False)
-
-    # Return empty dataframe when no clusters are found
-    mocker.patch("codeflare_sdk.cluster.cluster.list_all_clusters", return_value=[])
-    mocker.patch(
-        "codeflare_sdk.cluster.cluster.get_current_namespace",
+    # Prepare to run view_clusters when notebook environment is detected
+    mocker.patch("codeflare_sdk.common.widgets.widgets.is_notebook", return_value=True)
+    mock_get_current_namespace = mocker.patch(
+        "codeflare_sdk.ray.cluster.cluster.get_current_namespace",
         return_value="default",
     )
-    df = cf_widgets._fetch_cluster_data(namespace="default")
-    assert df.empty
+    namespace = mock_get_current_namespace.return_value
 
-    cf_widgets.view_clusters()
+    # Assert the function returns None when no clusters are found
+    mock_fetch_cluster_data = mocker.patch(
+        "codeflare_sdk.common.widgets.widgets._fetch_cluster_data",
+        return_value=pd.DataFrame(),
+    )
+    result = cf_widgets.view_clusters()
     captured = capsys.readouterr()
-    assert f"No clusters found in the default namespace." in captured.out
-
-    # Assert the function returns None
+    assert mock_fetch_cluster_data.return_value.empty
+    assert "No clusters found in the default namespace." in captured.out
     assert result is None
 
-    test_df = pd.DataFrame(
+    # Prepare to run view_clusters with a test DataFrame
+    mock_fetch_cluster_data = mocker.patch(
+        "codeflare_sdk.common.widgets.widgets._fetch_cluster_data",
+        return_value=pd.DataFrame(
+            {
+                "Name": ["test-cluster"],
+                "Namespace": ["default"],
+                "Num Workers": ["1"],
+                "Head GPUs": ["0"],
+                "Worker GPUs": ["0"],
+                "Head CPU Req~Lim": ["1~1"],
+                "Head Memory Req~Lim": ["1Gi~1Gi"],
+                "Worker CPU Req~Lim": ["1~1"],
+                "Worker Memory Req~Lim": ["1Gi~1Gi"],
+                "status": ['<span style="color: green;">Ready ✓</span>'],
+            }
+        ),
+    )
+    # Create a RayClusterManagerWidgets instance
+    ray_cluster_manager_instance = cf_widgets.RayClusterManagerWidgets(
+        ray_clusters_df=mock_fetch_cluster_data.return_value, namespace=namespace
+    )
+    # Patch the constructor of RayClusterManagerWidgets to return our initialized instance
+    mock_constructor = mocker.patch(
+        "codeflare_sdk.common.widgets.widgets.RayClusterManagerWidgets",
+        return_value=ray_cluster_manager_instance,
+    )
+
+    # Use a spy to track calls to display_widgets without replacing it
+    spy_display_widgets = mocker.spy(ray_cluster_manager_instance, "display_widgets")
+
+    cf_widgets.view_clusters()
+
+    mock_constructor.assert_called_once_with(
+        ray_clusters_df=mock_fetch_cluster_data.return_value, namespace=namespace
+    )
+
+    spy_display_widgets.assert_called_once()
+
+
+def test_delete_cluster(mocker, capsys):
+    name = "test-cluster"
+    namespace = "default"
+
+    mocker.patch("kubernetes.config.load_kube_config", return_value="ignore")
+    mocker.patch("kubernetes.client.ApisApi.get_api_versions")
+
+    mock_ray_cluster = MagicMock()
+    mocker.patch(
+        "kubernetes.client.CustomObjectsApi.get_namespaced_custom_object",
+        side_effect=[
+            mock_ray_cluster,
+            client.ApiException(status=404),
+            client.ApiException(status=404),
+            mock_ray_cluster,
+        ],
+    )
+
+    # In this scenario, the RayCluster exists and the AppWrapper does not.
+    mocker.patch(
+        "codeflare_sdk.ray.cluster.cluster._check_aw_exists", return_value=False
+    )
+    mock_delete_rc = mocker.patch(
+        "kubernetes.client.CustomObjectsApi.delete_namespaced_custom_object"
+    )
+    cf_widgets._delete_cluster(name, namespace)
+
+    mock_delete_rc.assert_called_once_with(
+        group="ray.io",
+        version="v1",
+        namespace=namespace,
+        plural="rayclusters",
+        name=name,
+    )
+
+    # In this scenario, the AppWrapper exists and the RayCluster does not
+    mocker.patch(
+        "codeflare_sdk.ray.cluster.cluster._check_aw_exists", return_value=True
+    )
+    mock_delete_aw = mocker.patch(
+        "kubernetes.client.CustomObjectsApi.delete_namespaced_custom_object"
+    )
+    cf_widgets._delete_cluster(name, namespace)
+
+    mock_delete_aw.assert_called_once_with(
+        group="workload.codeflare.dev",
+        version="v1beta2",
+        namespace=namespace,
+        plural="appwrappers",
+        name=name,
+    )
+
+    # In this scenario, the deletion of the resource times out.
+    with pytest.raises(
+        TimeoutError, match=f"Timeout waiting for {name} to be deleted."
+    ):
+        cf_widgets._delete_cluster(name, namespace, 1)
+
+
+def test_ray_cluster_manager_widgets_init(mocker, capsys):
+    namespace = "default"
+    mocker.patch("kubernetes.config.load_kube_config", return_value="ignore")
+    mocker.patch(
+        "kubernetes.client.CustomObjectsApi.list_namespaced_custom_object",
+        return_value=get_local_queue("kueue.x-k8s.io", "v1beta1", "ns", "localqueues"),
+    )
+    test_ray_clusters_df = pd.DataFrame(
         {
-            "Name": ["test-cluster"],
-            "Namespace": ["default"],
-            "Num Workers": ["1"],
-            "Head GPUs": ["0"],
-            "Worker GPUs": ["0"],
-            "Head CPU Req~Lim": ["1~1"],
-            "Head Memory Req~Lim": ["1Gi~1Gi"],
-            "Worker CPU Req~Lim": ["1~1"],
-            "Worker Memory Req~Lim": ["1Gi~1Gi"],
-            "status": ['<span style="color: green;">Ready ✓</span>'],
+            "Name": ["test-cluster-1", "test-cluster-2"],
+            "Namespace": [namespace, namespace],
+            "Num Workers": ["1", "2"],
+            "Head GPUs": ["0", "0"],
+            "Worker GPUs": ["0", "0"],
+            "Head CPU Req~Lim": ["1~1", "1~1"],
+            "Head Memory Req~Lim": ["1Gi~1Gi", "1Gi~1Gi"],
+            "Worker CPU Req~Lim": ["1~1", "1~1"],
+            "Worker Memory Req~Lim": ["1Gi~1Gi", "1Gi~1Gi"],
+            "status": [
+                '<span style="color: green;">Ready ✓</span>',
+                '<span style="color: green;">Ready ✓</span>',
+            ],
         }
     )
-
-    # Mock the _fetch_cluster_data function to return a test DataFrame
+    mock_fetch_cluster_data = mocker.patch(
+        "codeflare_sdk.common.widgets.widgets._fetch_cluster_data",
+        return_value=test_ray_clusters_df,
+    )
     mocker.patch(
-        "codeflare_sdk.cluster.widgets._fetch_cluster_data", return_value=test_df
+        "codeflare_sdk.ray.cluster.cluster.get_current_namespace",
+        return_value=namespace,
+    )
+    mock_delete_cluster = mocker.patch(
+        "codeflare_sdk.common.widgets.widgets._delete_cluster"
     )
 
-    # Mock the Cluster class and related methods
-    mocker.patch("codeflare_sdk.cluster.Cluster")
-    mocker.patch("codeflare_sdk.cluster.ClusterConfiguration")
+    # # Mock ToggleButtons
+    mock_toggle_buttons = mocker.patch("ipywidgets.ToggleButtons")
+    mock_button = mocker.patch("ipywidgets.Button")
+    mock_output = mocker.patch("ipywidgets.Output")
 
-    with patch("ipywidgets.ToggleButtons") as MockToggleButtons, patch(
-        "ipywidgets.Button"
-    ) as MockButton, patch("ipywidgets.Output") as MockOutput, patch(
-        "ipywidgets.HBox"
-    ), patch(
-        "ipywidgets.VBox"
-    ), patch(
-        "IPython.display.display"
-    ) as mock_display, patch(
-        "IPython.display.HTML"
-    ), patch(
-        "codeflare_sdk.cluster.widgets.Javascript"
-    ) as mock_javascript:
-        # Create mock widget instances
-        mock_toggle = MagicMock()
-        mock_delete_button = MagicMock()
-        mock_list_jobs_button = MagicMock()
-        mock_ray_dashboard_button = MagicMock()
-        mock_output = MagicMock()
+    # Initialize the RayClusterManagerWidgets instance
+    ray_cluster_manager_instance = cf_widgets.RayClusterManagerWidgets(
+        ray_clusters_df=test_ray_clusters_df, namespace=namespace
+    )
 
-        # Set the return values for the mocked widgets
-        MockToggleButtons.return_value = mock_toggle
-        MockButton.side_effect = [
-            mock_delete_button,
-            mock_list_jobs_button,
-            mock_ray_dashboard_button,
-        ]
-        MockOutput.return_value = mock_output
+    # Assertions for DataFrame and attributes
+    assert ray_cluster_manager_instance.ray_clusters_df.equals(
+        test_ray_clusters_df
+    ), "ray_clusters_df attribute does not match the input DataFrame"
+    assert (
+        ray_cluster_manager_instance.namespace == namespace
+    ), f"Expected namespace to be '{namespace}', but got '{ray_cluster_manager_instance.namespace}'"
+    assert (
+        ray_cluster_manager_instance.classification_widget.options
+        == test_ray_clusters_df["Name"].tolist()
+    ), "classification_widget options do not match the input DataFrame"
 
-        # Call the function under test
-        cf_widgets.view_clusters()
+    # Assertions for widgets
+    mock_toggle_buttons.assert_called_once_with(
+        options=test_ray_clusters_df["Name"].tolist(),
+        value=test_ray_clusters_df["Name"].tolist()[0],
+        description="Select an existing cluster:",
+    )
+    assert (
+        ray_cluster_manager_instance.classification_widget
+        == mock_toggle_buttons.return_value
+    ), "classification_widget is not set correctly"
+    assert (
+        ray_cluster_manager_instance.delete_button == mock_button.return_value
+    ), "delete_button is not set correctly"
+    assert (
+        ray_cluster_manager_instance.list_jobs_button == mock_button.return_value
+    ), "list_jobs_button is not set correctly"
+    assert (
+        ray_cluster_manager_instance.ray_dashboard_button == mock_button.return_value
+    ), "ray_dashboard_button is not set correctly"
+    assert (
+        ray_cluster_manager_instance.raycluster_data_output == mock_output.return_value
+    ), "raycluster_data_output is not set correctly"
+    assert (
+        ray_cluster_manager_instance.user_output == mock_output.return_value
+    ), "user_output is not set correctly"
+    assert (
+        ray_cluster_manager_instance.url_output == mock_output.return_value
+    ), "url_output is not set correctly"
 
-        # Simulate selecting a cluster
-        mock_toggle.value = "test-cluster"
-        selection_change = {"new": "test-cluster"}
-        cf_widgets._on_cluster_click(
-            selection_change, mock_output, "default", mock_toggle
-        )
+    ### Test button click events
+    mock_delete_button = MagicMock()
+    mock_list_jobs_button = MagicMock()
+    mock_ray_dashboard_button = MagicMock()
 
-        # Assert that the toggle options are set correctly
-        mock_toggle.observe.assert_called()
+    mock_javascript = mocker.patch("codeflare_sdk.common.widgets.widgets.Javascript")
+    ray_cluster_manager_instance.url_output = MagicMock()
 
-        # Simulate clicking the list jobs button
-        cf_widgets._on_list_jobs_button_click(
-            None, mock_toggle, test_df, mock_output, mock_output
-        )
-        mock_javascript.assert_called_once()
+    mock_dashboard_uri = mocker.patch(
+        "codeflare_sdk.ray.cluster.cluster.Cluster.cluster_dashboard_uri",
+        return_value="https://ray-dashboard-test-cluster-1-ns.apps.cluster.awsroute.org",
+    )
 
-        # Simulate clicking the Ray dashboard button
-        cf_widgets._on_ray_dashboard_button_click(
-            None, mock_toggle, test_df, mock_output, mock_output
-        )
-        mock_javascript.call_count = 2
+    # Simulate clicking the list jobs button
+    ray_cluster_manager_instance.classification_widget.value = "test-cluster-1"
+    ray_cluster_manager_instance._on_list_jobs_button_click(mock_list_jobs_button)
 
-        mocker.patch(
-            "kubernetes.client.CustomObjectsApi.delete_namespaced_custom_object",
-        )
-        mock_response = mocker.MagicMock()
-        mock_response.status = 404
-        mock_exception = ApiException(http_resp=mock_response)
-        mocker.patch(
-            "kubernetes.client.CustomObjectsApi.get_namespaced_custom_object",
-            side_effect=mock_exception,
-        )
+    captured = capsys.readouterr()
+    assert (
+        f"Opening Ray Jobs Dashboard for test-cluster-1 cluster:\n{mock_dashboard_uri.return_value}/#/jobs"
+        in captured.out
+    )
+    mock_javascript.assert_called_with(
+        f'window.open("{mock_dashboard_uri.return_value}/#/jobs", "_blank");'
+    )
 
-        # Simulate clicking the delete button
-        cf_widgets._on_delete_button_click(
-            None,
-            mock_toggle,
-            test_df,
-            mock_output,
-            mock_output,
-            mock_delete_button,
-            mock_list_jobs_button,
-            mock_ray_dashboard_button,
-        )
-        MockButton.call_count = 3
+    # Simulate clicking the Ray dashboard button
+    ray_cluster_manager_instance.classification_widget.value = "test-cluster-1"
+    ray_cluster_manager_instance._on_ray_dashboard_button_click(
+        mock_ray_dashboard_button
+    )
+
+    captured = capsys.readouterr()
+    assert (
+        f"Opening Ray Dashboard for test-cluster-1 cluster:\n{mock_dashboard_uri.return_value}"
+        in captured.out
+    )
+    mock_javascript.assert_called_with(
+        f'window.open("{mock_dashboard_uri.return_value}", "_blank");'
+    )
+
+    # Simulate clicking the delete button
+    ray_cluster_manager_instance.classification_widget.value = "test-cluster-1"
+    ray_cluster_manager_instance._on_delete_button_click(mock_delete_button)
+    mock_delete_cluster.assert_called_with("test-cluster-1", namespace)
+
+    mock_fetch_cluster_data.return_value = pd.DataFrame()
+    ray_cluster_manager_instance.classification_widget.value = "test-cluster-2"
+    ray_cluster_manager_instance._on_delete_button_click(mock_delete_button)
+    mock_delete_cluster.assert_called_with("test-cluster-2", namespace)
+
+    # Assert on deletion that the dataframe is empty
+    assert (
+        ray_cluster_manager_instance.ray_clusters_df.empty
+    ), "Expected DataFrame to be empty after deletion"
+
+    captured = capsys.readouterr()
+    assert (
+        f"Cluster test-cluster-1 in the {namespace} namespace was deleted successfully."
+        in captured.out
+    )
 
 
 def test_fetch_cluster_data(mocker):
     # Return empty dataframe when no clusters are found
-    mocker.patch("codeflare_sdk.cluster.cluster.list_all_clusters", return_value=[])
+    mocker.patch("codeflare_sdk.ray.cluster.cluster.list_all_clusters", return_value=[])
     df = cf_widgets._fetch_cluster_data(namespace="default")
     assert df.empty
 
@@ -3145,7 +3281,7 @@ def test_fetch_cluster_data(mocker):
     mock_raycluster2.status = RayClusterStatus.SUSPENDED
 
     with patch(
-        "codeflare_sdk.cluster.cluster.list_all_clusters",
+        "codeflare_sdk.ray.cluster.cluster.list_all_clusters",
         return_value=[mock_raycluster1, mock_raycluster2],
     ):
         # Call the function under test

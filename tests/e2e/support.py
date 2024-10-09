@@ -68,16 +68,26 @@ def create_namespace(self):
 def create_new_resource_flavor(self):
     self.resource_flavor = f"test-resource-flavor-{random_choice()}"
     create_resource_flavor(self, self.resource_flavor)
+    self.resource_flavor2 = f"test-resource-flavor-{random_choice()}"
+    create_resource_flavor2(self, self.resource_flavor2)
 
 
 def create_new_cluster_queue(self):
     self.cluster_queue = f"test-cluster-queue-{random_choice()}"
-    create_cluster_queue(self, self.cluster_queue, self.resource_flavor)
+    create_cluster_queue(
+        self, self.cluster_queue, self.resource_flavor, self.resource_flavor2
+    )
+    self.cluster_queue2 = f"test-cluster-second-{random_choice()}"
+    create_cluster_queue2(
+        self, self.cluster_queue2, self.resource_flavor, self.resource_flavor2
+    )
 
 
 def create_new_local_queue(self):
     self.local_queue = f"test-local-queue-{random_choice()}"
     create_local_queue(self, self.cluster_queue, self.local_queue)
+    self.local_queue2 = f"test-local-second-{random_choice()}"
+    create_local_queue2(self, self.cluster_queue2, self.local_queue2)
 
 
 def create_namespace_with_name(self, namespace_name):
@@ -114,13 +124,14 @@ def run_oc_command(args):
         return None
 
 
-def create_cluster_queue(self, cluster_queue, flavor):
+def create_cluster_queue(self, cluster_queue, flavor, flavor2):
     cluster_queue_json = {
         "apiVersion": "kueue.x-k8s.io/v1beta1",
         "kind": "ClusterQueue",
         "metadata": {"name": cluster_queue},
         "spec": {
             "namespaceSelector": {},
+            "cohort": "team-a",
             "resourceGroups": [
                 {
                     "coveredResources": ["cpu", "memory", "nvidia.com/gpu"],
@@ -128,11 +139,19 @@ def create_cluster_queue(self, cluster_queue, flavor):
                         {
                             "name": flavor,
                             "resources": [
-                                {"name": "cpu", "nominalQuota": 9},
-                                {"name": "memory", "nominalQuota": "36Gi"},
+                                {"name": "cpu", "nominalQuota": 4},
+                                {"name": "memory", "nominalQuota": "4Gi"},
                                 {"name": "nvidia.com/gpu", "nominalQuota": 1},
                             ],
-                        }
+                        },
+                        {
+                            "name": flavor2,
+                            "resources": [
+                                {"name": "cpu", "nominalQuota": 0},
+                                {"name": "memory", "nominalQuota": "0Gi"},
+                                {"name": "nvidia.com/gpu", "nominalQuota": 0},
+                            ],
+                        },
                     ],
                 }
             ],
@@ -161,11 +180,73 @@ def create_cluster_queue(self, cluster_queue, flavor):
     self.cluster_queue = cluster_queue
 
 
+def create_cluster_queue2(self, cluster_queue2, flavor, flavor2):
+    cluster_queue_json = {
+        "apiVersion": "kueue.x-k8s.io/v1beta1",
+        "kind": "ClusterQueue",
+        "metadata": {"name": cluster_queue2},
+        "spec": {
+            "namespaceSelector": {},
+            "cohort": "team-a",
+            "resourceGroups": [
+                {
+                    "coveredResources": ["cpu", "memory", "nvidia.com/gpu"],
+                    "flavors": [
+                        {
+                            "name": flavor,
+                            "resources": [
+                                {"name": "cpu", "nominalQuota": 0, "borrowingLimit": 1},
+                                {"name": "memory", "nominalQuota": "0Gi"},
+                                {"name": "nvidia.com/gpu", "nominalQuota": 0},
+                            ],
+                        },
+                        {
+                            "name": flavor2,
+                            "resources": [
+                                {"name": "cpu", "nominalQuota": 4},
+                                {"name": "memory", "nominalQuota": "4Gi"},
+                                {"name": "nvidia.com/gpu", "nominalQuota": 1},
+                            ],
+                        },
+                    ],
+                }
+            ],
+        },
+    }
+
+    try:
+        # Check if cluster-queue exists
+        self.custom_api.get_cluster_custom_object(
+            group="kueue.x-k8s.io",
+            plural="clusterqueues",
+            version="v1beta1",
+            name=cluster_queue2,
+        )
+        print(f"'{cluster_queue2}' already exists")
+    except:
+        # create cluster-queue
+        self.custom_api.create_cluster_custom_object(
+            group="kueue.x-k8s.io",
+            plural="clusterqueues",
+            version="v1beta1",
+            body=cluster_queue_json,
+        )
+        print(f"'{cluster_queue2}' created")
+
+    self.cluster_queue2 = cluster_queue2
+
+
 def create_resource_flavor(self, flavor):
     resource_flavor_json = {
         "apiVersion": "kueue.x-k8s.io/v1beta1",
         "kind": "ResourceFlavor",
         "metadata": {"name": flavor},
+        "spec": {
+            "nodeLabels": {"instance-type": "compute-node"},
+            "tolerations": [
+                {"key": "HasGPU", "operator": "Exists", "effect": "NoSchedule"}
+            ],
+        },
     }
 
     try:
@@ -188,6 +269,36 @@ def create_resource_flavor(self, flavor):
         print(f"'{flavor}' created!")
 
     self.resource_flavor = flavor
+
+
+def create_resource_flavor2(self, flavor):
+    resource_flavor_json = {
+        "apiVersion": "kueue.x-k8s.io/v1beta1",
+        "kind": "ResourceFlavor",
+        "metadata": {"name": flavor},
+        "spec": {"nodeLabels": {"instance-type": "compute-node2"}},
+    }
+
+    try:
+        # Check if resource flavor exists
+        self.custom_api.get_cluster_custom_object(
+            group="kueue.x-k8s.io",
+            plural="resourceflavors",
+            version="v1beta1",
+            name=flavor,
+        )
+        print(f"'{flavor}' already exists")
+    except:
+        # create kueue resource flavor
+        self.custom_api.create_cluster_custom_object(
+            group="kueue.x-k8s.io",
+            plural="resourceflavors",
+            version="v1beta1",
+            body=resource_flavor_json,
+        )
+        print(f"'{flavor}' created!")
+
+    self.resource_flavor2 = flavor
 
 
 def create_local_queue(self, cluster_queue, local_queue):
@@ -224,6 +335,42 @@ def create_local_queue(self, cluster_queue, local_queue):
         print(f"'{local_queue}' created in namespace '{self.namespace}'")
 
     self.local_queue = local_queue
+
+
+def create_local_queue2(self, cluster_queue2, local_queue):
+    local_queue_json = {
+        "apiVersion": "kueue.x-k8s.io/v1beta1",
+        "kind": "LocalQueue",
+        "metadata": {
+            "namespace": self.namespace,
+            "name": local_queue,
+            "annotations": {"kueue.x-k8s.io/default-queue": "false"},
+        },
+        "spec": {"clusterQueue": cluster_queue2},
+    }
+
+    try:
+        # Check if local-queue exists in given namespace
+        self.custom_api.get_namespaced_custom_object(
+            group="kueue.x-k8s.io",
+            namespace=self.namespace,
+            plural="localqueues",
+            version="v1beta1",
+            name=local_queue,
+        )
+        print(f"'{local_queue}' already exists in namespace '{self.namespace}'")
+    except:
+        # create local-queue
+        self.custom_api.create_namespaced_custom_object(
+            group="kueue.x-k8s.io",
+            namespace=self.namespace,
+            plural="localqueues",
+            version="v1beta1",
+            body=local_queue_json,
+        )
+        print(f"'{local_queue}' created in namespace '{self.namespace}'")
+
+    self.local_queue2 = local_queue
 
 
 def create_kueue_resources(self):
