@@ -40,7 +40,7 @@ jobs:
       - name: Checkout common repo code
         uses: actions/checkout@v4
         with:
-          repository: "project-codeflare/codeflare-common"
+          repository: "ygnas/codeflare-common"
           ref: "main"
           path: "common"
 
@@ -73,7 +73,7 @@ jobs:
       - name: Setup and start KinD cluster
         uses: ./common/github-actions/kind
         with:
-          cluster-name: ignas
+          worker-nodes: 2
 
       # - name: Install NVidia GPU operator for KinD
       #   uses: ./common/github-actions/nvidia-gpu-operator
