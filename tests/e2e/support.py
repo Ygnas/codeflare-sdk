@@ -65,19 +65,30 @@ def create_namespace(self):
         return RuntimeError(e)
 
 
-def create_new_resource_flavor(self):
-    self.resource_flavor = f"test-resource-flavor-{random_choice()}"
-    create_resource_flavor(self, self.resource_flavor)
+def create_new_resource_flavor(self, num_flavors=1):
+    self.resource_flavors = []
+    for i in range(num_flavors):
+        has_gpu = i < 1
+        resource_flavor = f"test-resource-flavor-{random_choice()}"
+        create_resource_flavor(self, resource_flavor, has_gpu)
+        self.resource_flavors.append(resource_flavor)
 
 
-def create_new_cluster_queue(self):
-    self.cluster_queue = f"test-cluster-queue-{random_choice()}"
-    create_cluster_queue(self, self.cluster_queue, self.resource_flavor)
+def create_new_cluster_queue(self, num_queues=1):
+    self.cluster_queues = []
+    for i in range(num_queues):
+        cluster_queue_name = f"test-cluster-queue-{random_choice()}"
+        create_cluster_queue(self, cluster_queue_name, self.resource_flavors[i])
+        self.cluster_queues.append(cluster_queue_name)
 
 
-def create_new_local_queue(self):
-    self.local_queue = f"test-local-queue-{random_choice()}"
-    create_local_queue(self, self.cluster_queue, self.local_queue)
+def create_new_local_queue(self, num_queues=1):
+    self.local_queues = []
+    for i in range(num_queues):
+        is_default = i == 0
+        local_queue_name = f"test-local-queue-{random_choice()}"
+        create_local_queue(self, self.cluster_queues[i], local_queue_name, is_default)
+        self.local_queues.append(local_queue_name)
 
 
 def create_namespace_with_name(self, namespace_name):
@@ -121,6 +132,7 @@ def create_cluster_queue(self, cluster_queue, flavor):
         "metadata": {"name": cluster_queue},
         "spec": {
             "namespaceSelector": {},
+            "cohort": "team-a",
             "resourceGroups": [
                 {
                     "coveredResources": ["cpu", "memory", "nvidia.com/gpu"],
@@ -128,11 +140,11 @@ def create_cluster_queue(self, cluster_queue, flavor):
                         {
                             "name": flavor,
                             "resources": [
-                                {"name": "cpu", "nominalQuota": 9},
-                                {"name": "memory", "nominalQuota": "36Gi"},
+                                {"name": "cpu", "nominalQuota": 4},
+                                {"name": "memory", "nominalQuota": "4Gi"},
                                 {"name": "nvidia.com/gpu", "nominalQuota": 1},
                             ],
-                        }
+                        },
                     ],
                 }
             ],
@@ -161,12 +173,25 @@ def create_cluster_queue(self, cluster_queue, flavor):
     self.cluster_queue = cluster_queue
 
 
-def create_resource_flavor(self, flavor):
+def create_resource_flavor(self, flavor, gpu_flavor=True):
     resource_flavor_json = {
         "apiVersion": "kueue.x-k8s.io/v1beta1",
         "kind": "ResourceFlavor",
         "metadata": {"name": flavor},
+        "spec": {
+            "nodeLabels": {"worker-1" if gpu_flavor else "ingress-ready": "true"},
+            "tolerations": [
+                {
+                    "key": "node-role.kubernetes.io/control-plane",
+                    "operator": "Exists",
+                    "effect": "NoSchedule",
+                }
+            ],
+        },
     }
+
+    if gpu_flavor:
+        resource_flavor_json["spec"]["nodeLabels"]["instance-type"] = "gpu-node"
 
     try:
         # Check if resource flavor exists
@@ -190,14 +215,14 @@ def create_resource_flavor(self, flavor):
     self.resource_flavor = flavor
 
 
-def create_local_queue(self, cluster_queue, local_queue):
+def create_local_queue(self, cluster_queue, local_queue, is_default=True):
     local_queue_json = {
         "apiVersion": "kueue.x-k8s.io/v1beta1",
         "kind": "LocalQueue",
         "metadata": {
             "namespace": self.namespace,
             "name": local_queue,
-            "annotations": {"kueue.x-k8s.io/default-queue": "true"},
+            "annotations": {"kueue.x-k8s.io/default-queue": str(is_default).lower()},
         },
         "spec": {"clusterQueue": cluster_queue},
     }
@@ -226,6 +251,42 @@ def create_local_queue(self, cluster_queue, local_queue):
     self.local_queue = local_queue
 
 
+def create_local_queue2(self, cluster_queue2, local_queue):
+    local_queue_json = {
+        "apiVersion": "kueue.x-k8s.io/v1beta1",
+        "kind": "LocalQueue",
+        "metadata": {
+            "namespace": self.namespace,
+            "name": local_queue,
+            "annotations": {"kueue.x-k8s.io/default-queue": "false"},
+        },
+        "spec": {"clusterQueue": cluster_queue2},
+    }
+
+    try:
+        # Check if local-queue exists in given namespace
+        self.custom_api.get_namespaced_custom_object(
+            group="kueue.x-k8s.io",
+            namespace=self.namespace,
+            plural="localqueues",
+            version="v1beta1",
+            name=local_queue,
+        )
+        print(f"'{local_queue}' already exists in namespace '{self.namespace}'")
+    except:
+        # create local-queue
+        self.custom_api.create_namespaced_custom_object(
+            group="kueue.x-k8s.io",
+            namespace=self.namespace,
+            plural="localqueues",
+            version="v1beta1",
+            body=local_queue_json,
+        )
+        print(f"'{local_queue}' created in namespace '{self.namespace}'")
+
+    self.local_queue2 = local_queue
+
+
 def create_kueue_resources(self):
     print("creating Kueue resources ...")
     create_new_resource_flavor(self)
@@ -235,25 +296,27 @@ def create_kueue_resources(self):
 
 def delete_kueue_resources(self):
     # Delete if given cluster-queue exists
-    try:
-        self.custom_api.delete_cluster_custom_object(
-            group="kueue.x-k8s.io",
-            plural="clusterqueues",
-            version="v1beta1",
-            name=self.cluster_queue,
-        )
-        print(f"\n'{self.cluster_queue}' cluster-queue deleted")
-    except Exception as e:
-        print(f"\nError deleting cluster-queue '{self.cluster_queue}' : {e}")
+    for cq in self.cluster_queues:
+        try:
+            self.custom_api.delete_cluster_custom_object(
+                group="kueue.x-k8s.io",
+                plural="clusterqueues",
+                version="v1beta1",
+                name=cq,
+            )
+            print(f"\n'{cq}' cluster-queue deleted")
+        except Exception as e:
+            print(f"\nError deleting cluster-queue '{cq}' : {e}")
 
     # Delete if given resource-flavor exists
-    try:
-        self.custom_api.delete_cluster_custom_object(
-            group="kueue.x-k8s.io",
-            plural="resourceflavors",
-            version="v1beta1",
-            name=self.resource_flavor,
-        )
-        print(f"'{self.resource_flavor}' resource-flavor deleted")
-    except Exception as e:
-        print(f"\nError deleting resource-flavor '{self.resource_flavor}' : {e}")
+    for flavor in self.resource_flavors:
+        try:
+            self.custom_api.delete_cluster_custom_object(
+                group="kueue.x-k8s.io",
+                plural="resourceflavors",
+                version="v1beta1",
+                name=flavor,
+            )
+            print(f"'{flavor}' resource-flavor deleted")
+        except Exception as e:
+            print(f"\nError deleting resource-flavor '{flavor}': {e}")
