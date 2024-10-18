@@ -34,7 +34,8 @@ ipywidgets = "8.1.2"
 optional = true
 
 [tool.poetry.group.docs.dependencies]
-pdoc3 = "0.10.0"
+sphinx = "7.4.7"
+sphinx-rtd-theme = "2.0.0"
 
 [tool.poetry.group.test]
 optional = true
@@ -57,3 +58,5 @@ markers = [
     "nvidia_gpu"
 ]
 addopts = "--timeout=900"
+testpaths = ["src/codeflare_sdk"]
+collect_ignore = ["src/codeflare_sdk/common/utils/unit_test_support.py"]
