@@ -77,7 +77,7 @@ def test_rjc_stop_job(ray_job_client, mocker):
     result = ray_job_client.stop_job(job_id="mocked_job_id")
 
     mocked_stop_job_True.assert_called_once_with(job_id="mocked_job_id")
-    assert result == (True, "Successfully stopped Job mocked_job_id")
+    assert result == (True, "Successfully stopped Job mocked_job")
 
     # Case return False
     mocked_stop_job_False = mocker.patch.object(
