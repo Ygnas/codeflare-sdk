@@ -63,7 +63,7 @@ def createClusterWrongType():
         worker_extended_resource_requests={"nvidia.com/gpu": 7},
         appwrapper=True,
         image_pull_secrets=["unit-test-pull-secret"],
-        image="quay.io/modh/ray@sha256:0d715f92570a2997381b7cafc0e224cfa25323f18b9545acfd23bc2b71576d06",
+        image="example/ray:tag",
         write_to_file=True,
         labels={1: 1},
     )
