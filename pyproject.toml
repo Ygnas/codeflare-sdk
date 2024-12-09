@@ -6,10 +6,10 @@ description = "Python SDK for codeflare client"
 license = "Apache-2.0"
 
 authors = [
-    "Michael Clifford <mcliffor@redhat.com>",
-    "Mustafa Eyceoz <meyceoz@redhat.com>",
-    "Abhishek Malvankar <asmalvan@us.ibm.com>",
-    "Atin Sood <asood@us.ibm.com>",
+  "Michael Clifford <mcliffor@redhat.com>",
+  "Mustafa Eyceoz <meyceoz@redhat.com>",
+  "Abhishek Malvankar <asmalvan@us.ibm.com>",
+  "Atin Sood <asood@us.ibm.com>",
 ]
 
 readme = 'README.md'
@@ -20,10 +20,10 @@ homepage = "https://github.com/project-codeflare/codeflare-sdk"
 keywords = ['codeflare', 'python', 'sdk', 'client', 'batch', 'scale']
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
 openshift-client = "1.0.18"
 rich = ">=12.5,<14.0"
-ray = {version = "2.35.0", extras = ["data", "default"]}
+ray = { version = "2.35.0", extras = ["data", "default"] }
 kubernetes = ">= 25.3.0, < 27"
 cryptography = "43.0.3"
 executing = "1.2.0"
@@ -49,14 +49,10 @@ jupyterlab = "4.3.1"
 
 [tool.pytest.ini_options]
 filterwarnings = [
-    "ignore::DeprecationWarning:pkg_resources",
-    "ignore:pkg_resources is deprecated as an API:DeprecationWarning",
+  "ignore::DeprecationWarning:pkg_resources",
+  "ignore:pkg_resources is deprecated as an API:DeprecationWarning",
 ]
-markers = [
-    "kind",
-    "openshift",
-    "nvidia_gpu"
-]
+markers = ["kind", "openshift", "nvidia_gpu"]
 addopts = "--timeout=900"
 testpaths = ["src/codeflare_sdk"]
 collect_ignore = ["src/codeflare_sdk/common/utils/unit_test_support.py"]
