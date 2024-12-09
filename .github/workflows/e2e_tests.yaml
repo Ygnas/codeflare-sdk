@@ -21,7 +21,7 @@ env:
 
 jobs:
   kubernetes:
-    runs-on: ubuntu-20.04-4core-gpu
+    runs-on: ubuntu-20.04
 
     steps:
       - name: Checkout code
@@ -56,7 +56,7 @@ jobs:
       - name: Set up specific Python version
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
           cache: 'pip' # caching pip dependencies
 
       - name: Setup NVidia GPU environment for KinD
@@ -117,7 +117,7 @@ jobs:
           pip install poetry
           poetry install --with test,docs
           echo "Running e2e tests..."
-          poetry run pytest -v -s ./tests/e2e -m 'kind and nvidia_gpu' > ${CODEFLARE_TEST_OUTPUT_DIR}/pytest_output.log 2>&1
+          poetry run pytest -v -s ./tests/e2e -m 'kind and not nvidia_gpu' > ${CODEFLARE_TEST_OUTPUT_DIR}/pytest_output.log 2>&1
         env:
           GRPC_DNS_RESOLVER: "native"
 
