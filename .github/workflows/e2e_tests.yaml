@@ -21,7 +21,7 @@ env:
 
 jobs:
   kubernetes:
-    runs-on: ubuntu-20.04-4core-gpu
+    runs-on: ubuntu-24.04-4core-gpu
 
     steps:
       - name: Checkout code
